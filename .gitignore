@@ -1,0 +1,43 @@
+# Binaries
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+supabase-converter
+
+# Go
+*.test
+*.out
+go.work
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Kubernetes
+*.kubeconfig
+
+# Secrets (do not commit actual secrets)
+secrets/
+*.secret
+*.key
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Generated files (if you want to commit them, remove these lines)
+# kustomize/
+# charts/
+
+# Logs
+*.log
