@@ -96,12 +96,36 @@ k8s-supabase/
 - ✅ **Automated Conversion**: Go-based tool to convert docker-compose to Kubernetes
 - ✅ **Helm Chart**: Production-ready Helm chart with customizable values
 - ✅ **Kustomize**: Declarative configuration with overlays for different environments
+- ✅ **Secret Extraction**: Advanced Go service that extracts secrets from running Supabase containers
 - ✅ **Secret Management**: Secure handling of JWT tokens, passwords, and API keys
-- ✅ **Post-Install Job**: Automatically extracts and displays secrets after deployment
+- ✅ **Client Integration**: Easy secret access for client applications via Kubernetes Secrets
 - ✅ **StatefulSets**: Proper handling of stateful services (PostgreSQL, Storage)
 - ✅ **Health Checks**: Kubernetes liveness and readiness probes
 - ✅ **Resource Management**: Configurable CPU and memory limits
 - ✅ **Multi-Environment**: Support for dev, staging, and production
+
+## 🔑 Secret Extraction
+
+This repository includes a sophisticated **Secret Extractor** service that automatically extracts secrets from running Supabase containers and persists them to Kubernetes Secrets.
+
+### How It Works
+
+1. **Waits for Services**: Ensures all Supabase services are ready
+2. **Extracts Secrets**: Reads from Postgres, Kong, Auth, and other services
+3. **Validates**: Ensures all required secrets are present and correctly formatted
+4. **Persists**: Stores secrets in a Kubernetes Secret resource
+5. **Enables Access**: Client apps can easily reference the Secret
+
+### Extracted Secrets
+
+- `POSTGRES_PASSWORD` - Database password
+- `JWT_SECRET` - JWT signing secret
+- `ANON_KEY` - Anonymous/public API key
+- `SERVICE_ROLE_KEY` - Service role API key
+- `DASHBOARD_USERNAME` / `DASHBOARD_PASSWORD` - Studio credentials
+- URLs and configuration
+
+See [secret-extractor/README.md](secret-extractor/README.md) for detailed documentation.
 
 ## 📦 Components
 
