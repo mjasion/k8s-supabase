@@ -179,7 +179,7 @@ jobs:
       - name: Install Supabase with Helm
         run: |
           kubectl create namespace supabase || true
-          helm install supabase ./k8s-manifests/helm/supabase \
+          helm install supabase ./k8s-manifests/charts/supabase \
             --namespace supabase \
             --wait \
             --timeout 10m \
@@ -322,6 +322,6 @@ jobs:
 
           # Verify outputs were created
           test -d test-output/kustomize/base || exit 1
-          test -d test-output/helm/supabase || exit 1
+          test -d test-output/charts/supabase || exit 1
 
           echo "Migration tool test successful!"

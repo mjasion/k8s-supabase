@@ -86,7 +86,7 @@ go build -o migrator .
 kubectl apply -k k8s-manifests/kustomize/base
 
 # OR test with Helm
-helm install supabase ./k8s-manifests/helm/supabase -n supabase --create-namespace
+helm install supabase ./k8s-manifests/charts/supabase -n supabase --create-namespace
 
 # Check deployment
 kubectl get pods -n supabase
