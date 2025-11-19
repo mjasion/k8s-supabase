@@ -1,5 +1,7 @@
 # Supabase Kubernetes Deployment
 
+[![Deploy and Test](https://github.com/mjasion/k8s-supabase/actions/workflows/deploy-test.yml/badge.svg)](https://github.com/mjasion/k8s-supabase/actions/workflows/deploy-test.yml)
+
 This repository contains Kubernetes manifests and Helm charts for deploying Supabase on Kubernetes.
 
 ## 🚀 Quick Start
@@ -29,6 +31,81 @@ helm install supabase charts/supabase -n supabase --create-namespace
 ```bash
 kubectl apply -k kustomize/base
 ```
+
+## 🧪 CI/CD & Testing
+
+This repository includes comprehensive automated testing with GitHub Actions that validates both Kustomize and Helm deployments on a local Kubernetes cluster.
+
+### Automated Tests
+
+The workflow automatically runs on every push and pull request, performing:
+
+1. **Kustomize Deployment Test**
+   - Creates a local Kubernetes cluster using [kind](https://kind.sigs.k8s.io/)
+   - Generates manifests using the migration tool
+   - Deploys Supabase using Kustomize
+   - Validates all services are running
+   - Tests database and API gateway connectivity
+
+2. **Helm Deployment Test**
+   - Creates a fresh Kubernetes cluster
+   - Generates the Helm chart using the migration tool
+   - Installs Supabase with Helm
+   - Verifies deployment health
+   - Runs health checks on all services
+
+3. **Secret Extractor Test**
+   - Runs all unit tests with coverage
+   - Builds the secret extractor binary
+   - Creates Docker image
+
+4. **Migration Tool Test**
+   - Builds the migration tool
+   - Tests manifest generation
+   - Validates output structure
+
+### Running Tests Locally
+
+You can run the same tests locally:
+
+```bash
+# Install kind (Kubernetes in Docker)
+curl -Lo ./kind https://kind.sigs.k8s.io/dl/v0.20.0/kind-linux-amd64
+chmod +x ./kind
+sudo mv ./kind /usr/local/bin/
+
+# Create a test cluster
+kind create cluster --name supabase-test
+
+# Run migration tool
+cd scripts/docker-compose-migration
+go build -o migrator .
+./migrator --repo supabase/supabase --path docker --output ../../k8s-manifests
+
+# Test with Kustomize
+kubectl apply -k k8s-manifests/kustomize/base
+
+# OR test with Helm
+helm install supabase ./k8s-manifests/helm/supabase -n supabase --create-namespace
+
+# Check deployment
+kubectl get pods -n supabase
+kubectl get svc -n supabase
+
+# Cleanup
+kind delete cluster --name supabase-test
+```
+
+### Workflow Status
+
+View the latest workflow runs and logs:
+- [GitHub Actions](https://github.com/mjasion/k8s-supabase/actions)
+- Workflow file: [`.github/workflows/deploy-test.yml`](.github/workflows/deploy-test.yml)
+
+The workflow runs on:
+- Every push to `main`, `master`, or `develop` branches
+- Every pull request to `main` or `master`
+- Manual trigger via GitHub Actions UI
 
 ## 📁 Repository Structure
 

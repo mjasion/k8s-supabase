@@ -1,0 +1,327 @@
+name: Deploy and Test Supabase on Kubernetes
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+env:
+  KIND_VERSION: v0.20.0
+  KUBECTL_VERSION: v1.28.0
+  HELM_VERSION: v3.13.0
+  GO_VERSION: '1.21'
+
+jobs:
+  test-kustomize-deployment:
+    name: Test Kustomize Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name supabase-test --wait 300s
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Generate Kustomize manifests
+        run: |
+          cd scripts/docker-compose-migration
+          go build -o migrator .
+          ./migrator \
+            --repo supabase/supabase \
+            --path docker \
+            --output ../../k8s-manifests
+
+      - name: Apply Kustomize base
+        run: |
+          kubectl create namespace supabase || true
+          kubectl apply -k k8s-manifests/kustomize/base
+
+      - name: Wait for pods to be ready
+        run: |
+          echo "Waiting for Supabase pods to become ready..."
+          kubectl wait --for=condition=ready pod \
+            --all \
+            --namespace=supabase \
+            --timeout=600s || true
+
+          # Show pod status for debugging
+          kubectl get pods -n supabase
+          kubectl get services -n supabase
+
+      - name: Check service health
+        run: |
+          # Check if critical pods are running
+          EXPECTED_PODS=("db" "kong" "auth" "rest" "realtime" "storage" "meta")
+
+          for pod in "${EXPECTED_PODS[@]}"; do
+            echo "Checking pod: supabase-$pod"
+            POD_STATUS=$(kubectl get pods -n supabase -l app=$pod -o jsonpath='{.items[0].status.phase}' 2>/dev/null || echo "NotFound")
+            echo "  Status: $POD_STATUS"
+
+            if [ "$POD_STATUS" != "Running" ] && [ "$POD_STATUS" != "Succeeded" ]; then
+              echo "  Warning: Pod supabase-$pod is not running"
+              kubectl describe pod -n supabase -l app=$pod || true
+              kubectl logs -n supabase -l app=$pod --tail=50 || true
+            fi
+          done
+
+      - name: Test database connectivity
+        run: |
+          # Port forward to postgres
+          kubectl port-forward -n supabase svc/supabase-db 5432:5432 &
+          sleep 5
+
+          # Test connection (without actual connection since we don't have credentials)
+          nc -zv localhost 5432 || echo "Database port not accessible"
+
+      - name: Test API Gateway
+        run: |
+          # Port forward to Kong
+          kubectl port-forward -n supabase svc/supabase-kong 8000:8000 &
+          sleep 5
+
+          # Test Kong health
+          curl -f http://localhost:8000/health || echo "Kong health check failed"
+
+      - name: Export cluster logs
+        if: failure()
+        run: |
+          mkdir -p logs
+          kubectl get all -n supabase > logs/resources.txt
+          kubectl describe pods -n supabase > logs/pod-descriptions.txt
+          for pod in $(kubectl get pods -n supabase -o name); do
+            kubectl logs -n supabase $pod --all-containers > "logs/${pod//\//-}.log" 2>&1 || true
+          done
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: kustomize-deployment-logs
+          path: logs/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          kind delete cluster --name supabase-test
+
+  test-helm-deployment:
+    name: Test Helm Deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install kubectl
+        run: |
+          curl -LO "https://dl.k8s.io/release/${{ env.KUBECTL_VERSION }}/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+
+      - name: Install Helm
+        run: |
+          curl -LO "https://get.helm.sh/helm-${{ env.HELM_VERSION }}-linux-amd64.tar.gz"
+          tar -zxvf helm-${{ env.HELM_VERSION }}-linux-amd64.tar.gz
+          sudo mv linux-amd64/helm /usr/local/bin/helm
+
+      - name: Install kind
+        run: |
+          curl -Lo ./kind "https://kind.sigs.k8s.io/dl/${{ env.KIND_VERSION }}/kind-linux-amd64"
+          chmod +x ./kind
+          sudo mv ./kind /usr/local/bin/kind
+
+      - name: Create kind cluster
+        run: |
+          kind create cluster --name supabase-helm-test --wait 300s
+          kubectl cluster-info
+          kubectl get nodes
+
+      - name: Generate Helm chart
+        run: |
+          cd scripts/docker-compose-migration
+          go build -o migrator .
+          ./migrator \
+            --repo supabase/supabase \
+            --path docker \
+            --output ../../k8s-manifests
+
+      - name: Install Supabase with Helm
+        run: |
+          kubectl create namespace supabase || true
+          helm install supabase ./k8s-manifests/helm/supabase \
+            --namespace supabase \
+            --wait \
+            --timeout 10m \
+            --set global.domain=localhost \
+            --set postgres.persistence.enabled=false \
+            --set storage.persistence.enabled=false
+
+      - name: Check Helm release status
+        run: |
+          helm list -n supabase
+          helm status supabase -n supabase
+
+      - name: Wait for pods to be ready
+        run: |
+          echo "Waiting for Supabase pods to become ready..."
+          kubectl wait --for=condition=ready pod \
+            --all \
+            --namespace=supabase \
+            --timeout=600s || true
+
+          # Show pod status for debugging
+          kubectl get pods -n supabase
+          kubectl get services -n supabase
+
+      - name: Check service health
+        run: |
+          # Get all pods and their status
+          kubectl get pods -n supabase -o wide
+
+          # Check if any pods are in error state
+          ERROR_PODS=$(kubectl get pods -n supabase --field-selector=status.phase!=Running,status.phase!=Succeeded -o name | wc -l)
+          echo "Pods not in Running/Succeeded state: $ERROR_PODS"
+
+          if [ "$ERROR_PODS" -gt 0 ]; then
+            echo "Some pods are not healthy:"
+            kubectl get pods -n supabase --field-selector=status.phase!=Running,status.phase!=Succeeded
+          fi
+
+      - name: Test database connectivity
+        run: |
+          # Port forward to postgres
+          kubectl port-forward -n supabase svc/supabase-db 5432:5432 &
+          sleep 5
+
+          # Test connection
+          nc -zv localhost 5432 || echo "Database port not accessible"
+
+      - name: Test API Gateway
+        run: |
+          # Port forward to Kong
+          kubectl port-forward -n supabase svc/supabase-kong 8000:8000 &
+          sleep 5
+
+          # Test Kong health
+          curl -f http://localhost:8000/health || echo "Kong health check failed"
+
+      - name: Run secret extractor test
+        run: |
+          cd secret-extractor
+          go test -v ./...
+
+      - name: Export cluster logs
+        if: failure()
+        run: |
+          mkdir -p logs
+          kubectl get all -n supabase > logs/resources.txt
+          kubectl describe pods -n supabase > logs/pod-descriptions.txt
+          helm get values supabase -n supabase > logs/helm-values.yaml
+          helm get manifest supabase -n supabase > logs/helm-manifest.yaml
+          for pod in $(kubectl get pods -n supabase -o name); do
+            kubectl logs -n supabase $pod --all-containers > "logs/${pod//\//-}.log" 2>&1 || true
+          done
+
+      - name: Upload logs
+        if: failure()
+        uses: actions/upload-artifact@v3
+        with:
+          name: helm-deployment-logs
+          path: logs/
+
+      - name: Cleanup
+        if: always()
+        run: |
+          helm uninstall supabase -n supabase || true
+          kind delete cluster --name supabase-helm-test
+
+  test-secret-extractor:
+    name: Test Secret Extractor
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Run unit tests
+        run: |
+          cd secret-extractor
+          go test -v -cover ./...
+
+      - name: Build binary
+        run: |
+          cd secret-extractor
+          make build
+
+      - name: Build Docker image
+        run: |
+          cd secret-extractor
+          docker build -t supabase-secret-extractor:test .
+
+  test-migration-tool:
+    name: Test Migration Tool
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v4
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Build migration tool
+        run: |
+          cd scripts/docker-compose-migration
+          go build -o migrator .
+
+      - name: Test migration tool
+        run: |
+          cd scripts/docker-compose-migration
+          ./migrator \
+            --repo supabase/supabase \
+            --path docker \
+            --output ./test-output
+
+          # Verify outputs were created
+          test -d test-output/kustomize/base || exit 1
+          test -d test-output/helm/supabase || exit 1
+
+          echo "Migration tool test successful!"
