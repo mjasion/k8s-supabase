@@ -80,7 +80,7 @@ kind create cluster --name supabase-test
 # Run migration tool
 cd scripts/docker-compose-migration
 go build -o migrator .
-./migrator --repo supabase/supabase --path docker --output ../../k8s-manifests
+./migrator --repo supabase/supabase --docker-path docker --output ../../k8s-manifests
 
 # Test with Kustomize
 kubectl apply -k k8s-manifests/kustomize/base
